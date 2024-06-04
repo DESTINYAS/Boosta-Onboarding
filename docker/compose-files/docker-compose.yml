@@ -1,0 +1,203 @@
+version: "3"
+services:
+
+
+  # ! If you keep getting 413 errors that are not coming from this nginx, remember that 
+  # ! The proxy that routes request into the docker might also be capping the file size,
+  # ! E.g. another nginx that routes requests into this nginx
+  boosta-onboarding-proxy:
+    image: nginx:alpine
+    container_name: onboarding-app-proxy
+    ports:
+      - '8009:80'
+    volumes:
+      - ./../../nginx/nginx.dev.conf:/etc/nginx/nginx.conf
+    restart: 'unless-stopped'
+    depends_on:
+      - boosta-onboarding-app
+      - boosta-onboarding-pgadmin
+
+  # * Requests are being routed into the boosta-onboarding-app container from the nginx-proxy
+  boosta-onboarding-app:
+    image: boosta-onboarding-app-dev
+    build:
+      context: ../..
+      target: development-build-stage # ! change this to production-build-stage for staging and production environment
+      dockerfile: docker/Dockerfile.dev
+    container_name: onboarding-server
+    command: "npm run start:dev"
+    volumes:
+      - /usr/boosta/onboarding/node_modules
+      - ../../:/usr/boosta/onboarding
+    restart: 'unless-stopped'
+    depends_on:
+      - boosta-onboarding-db
+      - boosta-minio-nginx
+
+    env_file: # ! use environment on staging/production environment
+      - ../../.env # ? this must be located at the root of the project
+
+    # override what's stored in the .env file
+    environment:
+      - POSTGRES_HOST=boosta-onboarding-db
+      - POSTGRES_PORT=5432
+      - RABBITMQ_HOST=boosta-rabbitmq
+      - S3_SECRET_ACCESS_KEY=minioadmin
+      - S3_ACCESS_KEY=minioadmin
+      - S3_ENDPOINT=boosta-minio-nginx # why is the port hardcode?
+
+      - S3_SELFIES_BUCKET_NAME=selfies-dev
+      - S3_SHOPS_BUCKET_NAME=shops-photos-dev
+      - S3_REGION=us-east-1
+      - SHOP_VALUE_THRESHOLD=100
+      - GET_A_USER_AUTH_SERVICE_ENDPOINT = boosta-auth-proxy:8000/users/with-admin-access
+
+
+  boosta-onboarding-db:
+    container_name: boosta-onboarding-db
+    image: postgres:latest
+    # environment:
+    #   POSTGRES_USER: ${POSTGRES_USER:-postgres}
+    #   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+    - "5439:5432"
+    volumes:
+    - ~/boosta-files/onboarding/postgres:/var/lib/postgresql/data
+    env_file:
+      - .docker.env
+
+
+  # ? NOTE: to connect in this pgadmin container, use the container's name i.e postgres but localhost in host
+  boosta-onboarding-pgadmin:
+    container_name: boosta-onboarding-pgadmin
+    image: dpage/pgadmin4
+    ports:
+    - "9019:80"
+    volumes:
+    - ~/boosta-files/onboarding/pgadmin:/root/.pgadmin
+    env_file:
+    - .docker.env
+ 
+
+# * MINIO
+  boosta-minio-nginx:
+    container_name: boosta-minio-nginx
+    image: nginx:1.19.2-alpine
+    hostname: boosta-nginx
+    volumes:
+      - ./../../nginx/minio.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    depends_on:
+      - boosta-minio1
+      - boosta-minio2
+      - boosta-minio3
+      - boosta-minio4
+
+  # starts 4 docker containers running minio server instances.
+  # using nginx reverse proxy, load balancing, you can access
+  # it through port 9000.
+  boosta-minio1:
+    image: quay.io/minio/minio:RELEASE.2022-08-05T23-27-09Z
+    command: server --console-address ":9001" http://boosta-minio{1...4}/data{1...2}
+    expose:
+      - "9000"
+      - "9001"
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    container_name: boosta-minio1
+    hostname: boosta-minio1
+    volumes:
+     # Run this sudo chown -R 1001 ~/minio  if you get errors on permission
+      - ~/boosta-files/minio/data1-1:/data1
+      - ~/boosta-files/minio/data1-2:/data2
+
+  boosta-minio2:
+    image: quay.io/minio/minio:RELEASE.2022-08-05T23-27-09Z
+    command: server --console-address ":9001" http://boosta-minio{1...4}/data{1...2}
+    expose:
+      - "9000"
+      - "9001"
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    container_name: boosta-minio2
+    hostname: boosta-minio2
+    volumes:
+     # Run this sudo chown -R 1001 ~/minio  if you get errors on permission
+      - ~/boosta-files/minio/data2-1:/data1
+      - ~/boosta-files/minio/data2-2:/data2
+
+  boosta-minio3:
+
+    image: quay.io/minio/minio:RELEASE.2022-08-05T23-27-09Z
+    command: server --console-address ":9001" http://boosta-minio{1...4}/data{1...2}
+    expose:
+      - "9000"
+      - "9001"
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    container_name: boosta-minio3
+    hostname: boosta-minio3
+    volumes:
+     # Run this sudo chown -R 1001 ~/minio  if you get errors on permission
+      - ~/boosta-files/minio/data3-1:/data1
+      - ~/boosta-files/minio/data3-2:/data2
+
+  boosta-minio4:
+
+    image: quay.io/minio/minio:RELEASE.2022-08-05T23-27-09Z
+    command: server --console-address ":9001" http://boosta-minio{1...4}/data{1...2}
+    expose:
+      - "9000"
+      - "9001"
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    container_name: boosta-minio4
+    hostname: boosta-minio4
+    volumes:
+     # Run this sudo chown -R 1001 ~/minio  if you get errors on permission
+      - ~/boosta-files/minio/data4-1:/data1
+      - ~/boosta-files/minio/data4-2:/data2
+# * END MINIO
+
+networks:
+  default:
+    external: true
+    name: boosta-network
+
+## By default this config uses default local driver,
+## For custom volumes replace with volume driver configuration.
+volumes:
+  data1-1:
+  data1-2:
+  data2-1:
+  data2-2:
+  data3-1:
+  data3-2:
+  data4-1:
+  data4-2:
